@@ -1,0 +1,205 @@
+<!-- Adapted from Mike Bostock's 'Spline Transition' -->
+<!-- https://bl.ocks.org/mbostock/1642989 -->
+<!DOCTYPE html>
+<meta charset="utf-8">
+<style>
+
+.line {
+  fill: none;
+  stroke: #000;
+  stroke-width: 1.5px;
+}
+
+</style>
+<p id="info"> </p>
+<svg width="960" height="500"></svg>
+<script src="//d3js.org/d3.v4.min.js"></script>
+<script>
+  // the URL to gdax's websocket feed
+var wsUri = "ws://" + window.location.host + "/power-ws";
+// the subscription message to tell the websocket what kind of data we are interested in
+//var subscribe = '{"type": "subscribe","product_ids": ["ETH-USD"],"channels": [{"name": "ticker","product_ids": ["ETH-USD"]}]}';
+var firstMessageReceived = false;
+var count = 0;
+// keep track of the 'center' point for the y axis
+var center;
+// how much data we want to display around the center point
+var sigma = 0.5;
+// buffer for y axis
+var buffer = 0.1;
+
+initializeWebSocket();
+
+/**
+* Function that creates a WebSocket object and assigns handlers.
+* Adapted from https://websocket.org/echo.html
+*/
+function initializeWebSocket() {
+  websocket = new WebSocket(wsUri);
+  websocket.onopen = function(evt) { onOpen(evt) };
+  websocket.onclose = function(evt) { onClose(evt) };
+  websocket.onmessage = function(evt) { onMessage(evt) };
+  websocket.onerror = function(evt) { onError(evt) };
+}
+
+/**
+* Websocket opening handler
+*/
+function onOpen(evt) {
+  d3.select('#info')
+    .text('Connected to the websocket! Waiting for a transaction...');
+  // send the subscription message
+  //  websocket.send(subscribe);
+}
+
+/**
+* Websocket receives a message handler
+*/
+function onMessage(evt) {
+  count++;
+  // parse JSON response
+  var point = JSON.parse(evt.data);
+  // add this point to the data array
+  data.push(+point['watts']);
+
+  // record when the first message is received so we can draw an initial y axis
+  if (!firstMessageReceived) {
+    firstMessageReceived = true;
+    center = +point['watts'];
+    d3.select('#info')
+      .text("Waiting for transactions...");
+    drawAxes(center-sigma, center+sigma);
+  }
+  if (count > 2) {
+    d3.select('#info')
+      .text("Real time visualization of power usage");
+  }
+
+  // code to expand y domain if the data goes out of the current bounds
+  if (+point['watts'] > center+sigma) {
+    sigma+= +point['watts'] - (center+sigma) + buffer;
+    drawAxes(center-sigma, center+sigma);
+  } else if (+point['watts'] < center-sigma) {
+    sigma+= (center-sigma) - +point['watts'] + buffer;
+    drawAxes(center-sigma, center+sigma);
+  }
+
+  // redraw the line when new data gets added
+  redrawLine();
+
+  // if we have too much data, start moving the data line out of the view
+  if (data.length > 40) {
+    d3.select('.line')
+      .transition()
+      .duration(2000)
+      .ease(d3.easeLinear)
+      .on("start", tick);
+  }
+}
+
+/**
+* Websocket closing handler
+*/
+function onClose(evt) {
+  console.log('disconnected');
+}
+
+/**
+* Websocket error handler
+*/
+function onError(evt) {
+  console.log('error: ', evt.data);
+}
+
+// the number of points to show
+var n = 40;
+    data = [];
+
+// standard SVG margin stuff
+var svg = d3.select("svg"),
+    margin = {top: 20, right: 20, bottom: 20, left: 40},
+    width = +svg.attr("width") - margin.left - margin.right,
+    height = +svg.attr("height") - margin.top - margin.bottom,
+    g = svg.append("g").attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+// set the x domain and range
+var x = d3.scaleLinear()
+          .domain([1, n - 2])
+          .range([0, width]);
+
+// set y range-- domain will be set by incoming prices
+var y = d3.scaleLinear()
+          .range([height, 0]);
+
+/**
+* Function to draw the axes
+*/
+function drawAxes(low, high) {
+ // set the y domain
+ y.domain([low, high])
+
+ // put the x axis at the bottom of the chart
+ d3.select('.axis--x')
+   .attr("transform", "translate(0," + y(low) + ")")
+   .call(d3.axisBottom(x));
+
+ // set y axis
+ d3.select('.axis--y')
+   .call(d3.axisLeft(y));
+}
+
+// add groups for each of the axes
+g.append("g")
+ .attr("class", "axis axis--x")
+g.append("g")
+ .attr("class", "axis axis--y")
+
+// function for the line that will be drawn
+var line = d3.line()
+    .curve(d3.curveBasis)
+    .x(function(d, i) { return x(i); })
+    .y(function(d, i) { return y(d); });
+
+// clip path so we don't get a line outside our graph area when it starts moving
+g.append("defs").append("clipPath")
+    .attr("id", "clip")
+  .append("rect")
+    .attr("width", width)
+    .attr("height", height);
+
+// group for the line
+g.append("g")
+    .attr("clip-path", "url(#clip)")
+  .append("path")
+    .datum(data)
+    .attr("class", "line")
+
+/**
+* Function to call the line drawing using the 'line' function
+*/
+function redrawLine() {
+  d3.select('.line')
+    .attr('d', line)
+    .attr('transform', null);
+}
+
+/**
+* Function that makes the animation and pops off points to get animated effect
+*/
+function tick() {
+  if (data.length < n-2) {
+    return;
+  }
+  redrawLine();
+
+  // Slide it to the left.
+  d3.active(this)
+      .attr("transform", "translate(" + x(0) + ",0)")
+    .transition()
+      .on("start", tick);
+
+  // Pop the old data point off the front.
+  data.shift();
+}
+
+</script>
